@@ -45,7 +45,7 @@ this.priority = parent.getPriority();
 
 严谨一点说，**子线程默认优先级和父线程一样，Java 主线程默认的优先级是 5。**
 
-Java 中定义了 3 种优先级，代码如下所示。Java 优先级范围是 [1, 10]，  
+Java 中定义了 3 种优先级，分别是`最低优先级（1）`、`正常优先级（5）`、`最高优先级（10）`，代码如下所示。Java 优先级范围是 **[1, 10]**，设置其他数字的优先级都会抛出 `IllegalArgumentException` 异常。
 
 ```java
 /**
@@ -64,6 +64,7 @@ public final static int NORM_PRIORITY = 5;
 public final static int MAX_PRIORITY = 10;
 ```
 
+接下来说说线程优先级的作用。
 
 
 ### 默认优先级
