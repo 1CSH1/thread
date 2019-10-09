@@ -4,11 +4,11 @@
 
 我们先来看看 `Thread.setDaemon()` 方法的注释，如下所示。
 
-```
-1. Marks this thread as either a daemon thread or a user thread. 
+
+>1. Marks this thread as either a daemon thread or a user thread. 
 2. The Java Virtual Machine exits when the only threads running are all daemon threads.
 3. This method must be invoked before the thread is started.
-```
+
 
 里面提到了 3 点信息，一一来做下解释：
 
@@ -16,7 +16,7 @@
 
 把 Java 线程分成 2 类，一类是**用户线程**，也就是我们创建线程时，默认的一类线程，属性 `daemon = false`；另一类是**守护线程**，当我们设置 `daemon = true` 时，就是这类线程。
 
-两者的一般关系是：用户线程就是运行在前台的线程，守护线程就是运行在后台的线程，一般情况下，守护线程是为用户线程提供一些服务。比如在 Java 中，守护线程
+两者的一般关系是：用户线程就是运行在前台的线程，守护线程就是运行在后台的线程，一般情况下，守护线程是为用户线程提供一些服务。比如在 Java 中，我们常说的 GC 内存回收线程就是守护线程。
 
 ### 2. JVM 与用户线程共存亡
 
@@ -78,7 +78,7 @@ void Threads::remove(JavaThread* p, bool is_daemon) {
 }
 ```
 
-我在里面加了一些注释，可以发现，果然是我们想的那样，里面有记录着非守护线程的数量，而且当非守护线程为 1 时，就会唤醒在 `destory_vm()` 方法里面等待的线程，我们确认已经找到 JVM 在非守护线程数为 1 时会触发 JVM 退出的代码。紧接着我们看看 `destory_vm()` 代码，同样是在 `thread.cpp` 文件下。
+我在里面加了一些注释，可以发现，果然是我们想的那样，里面有记录着非守护线程的数量，而且当非守护线程为 1 时，就会唤醒在 `destory_vm()` 方法里面等待的线程，我们确认已经找到 JVM 在非守护线程数为 1 时会触发唤醒监控 JVM 退出的线程代码。紧接着我们看看 `destory_vm()` 代码，同样是在 `thread.cpp` 文件下。
 
 
 ```
