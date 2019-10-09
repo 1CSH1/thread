@@ -13,7 +13,7 @@ public class TestDaemon {
         MyThread myThread2 = new MyThread("nodaemonThread", 100);
         myThread2.start();
         try {
-            Thread.sleep(1000);
+            Thread.sleep(100000000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }

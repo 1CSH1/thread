@@ -20,7 +20,7 @@
 
 ### 2. JVM 与用户线程共存亡
 
-上面第二点翻译过来是：**当所有用户线程都执行完，只存在守护线程在运行时，JVM 就退出**。看了网上资料以及一些书籍，全都有这句话，但是都也只是有这句话，没有讲明是为啥，好像这句话就成了定理，不需要证明的样子。既然咱最近搭建了 JVM Debug 环境，那就得来查个究竟。（查得好辛苦，花了很久的时间才查出来）
+上面第二点翻译过来是：**当所有用户线程都执行完，只存在守护线程在运行时，JVM 就退出**。看了网上资料以及一些书籍，全都有这句话，但是也都只是有这句话，没有讲明是为啥，好像这句话就成了定理，不需要证明的样子。既然咱最近搭建了 JVM Debug 环境，那就得来查个究竟。（查得好辛苦，花了很久的时间才查出来）
 
 我们看到 JVM 源码 `thread.cpp` 文件，这里是实现线程的代码。我们通过上面那句话，说明是有一个地方监测着当前非守护线程的数量，不然怎么知道现在只剩下守护线程呢？很有可能是在移除线程的方法里面，跟着这个思路，我们看看该文件的 `remove()` 方法。代码如下。
 ```
@@ -78,13 +78,67 @@ void Threads::remove(JavaThread* p, bool is_daemon) {
 }
 ```
 
-我在里面加了一些注释，可以发现，果然是我们想的那样，里面有记录着非守护线程的数量，而且当非守护线程为 1 时，就会唤醒在 `destory_vm()` 方法里面等待的线程，我们确认已经找到 JVM 在非守护线程数为 1 时会触发 JVM 退出的代码。紧接着我们看看 `destory_vm()` 代码。
+我在里面加了一些注释，可以发现，果然是我们想的那样，里面有记录着非守护线程的数量，而且当非守护线程为 1 时，就会唤醒在 `destory_vm()` 方法里面等待的线程，我们确认已经找到 JVM 在非守护线程数为 1 时会触发 JVM 退出的代码。紧接着我们看看 `destory_vm()` 代码，同样是在 `thread.cpp` 文件下。
 
 
+```
+bool Threads::destroy_vm() {
+  JavaThread* thread = JavaThread::current();
 
-守护线程与普通线程唯一的区别是：当线程退出时，JVM 会检查其他正在运行的线程，如果这些线程都是守护线程，那么 JVM 会正常退出操作，但是如果有普通线程还在运行，JVM 是不会执行退出操作的。当 JVM 退出时，所有仍然存在的守护线程都将被抛弃，既不会执行 finally 部分的代码，也不会执行 stack unwound 操作，JVM 会直接退出。
+#ifdef ASSERT
+  _vm_complete = false;
+#endif
+  /**
+   * 等待自己是最后一个非守护线程条件
+   */
+  // Wait until we are the last non-daemon thread to execute
+  { MonitorLocker nu(Threads_lock);
+    while (Threads::number_of_non_daemon_threads() > 1)
+        /**
+         * 非守护线程数大于 1，则一直等待
+         */
+      // This wait should make safepoint checks, wait without a timeout,
+      // and wait as a suspend-equivalent condition.
+      nu.wait(0, Mutex::_as_suspend_equivalent_flag);
+  }
+
+  /**
+   * 下面代码是关闭 VM 的逻辑
+   */
+  EventShutdown e;
+  if (e.should_commit()) {
+    e.set_reason("No remaining non-daemon Java threads");
+    e.commit();
+  }
+  ...... 省略余下代码
+}
+```
+
+我们这里看到当非守护线程数量大于 1 时，就一直等待，直到剩下一个非守护线程时，就会在线程执行完后，退出 JVM。这时候又有一个点需要定位，什么时候调用 `destroy_vm()` 方法呢？还是通过查看代码以及注释，发现是在 `main()` 方法执行完成后触发的。
+
+在 `java.c` 文件的 `JavaMain()` 方法里面，最后执行完调用了 `LEAVE()` 方法，该方法调用了 `(*vm)->DestroyJavaVM(vm); ` 来触发 JVM 退出，最终调用 `destroy_vm()` 方法。
+```
+#define LEAVE() \
+    do { \
+        if ((*vm)->DetachCurrentThread(vm) != JNI_OK) { \
+            JLI_ReportErrorMessage(JVM_ERROR2); \
+            ret = 1; \
+        } \
+        if (JNI_TRUE) { \
+            (*vm)->DestroyJavaVM(vm); \
+            return ret; \
+        } \
+    } while (JNI_FALSE)
+```
+
+所以我们也知道了，为啥 main 线程可以比子线程先退出？虽然 main 线程退出前调用了 `destroy_vm()` 方法，但是在 `destroy_vm()` 方法里面等待着非守护线程执行完，子线程如果是非守护线程，则 JVM 会一直等待，不会立即退出。
+
+我们对这个点总结一下：**Java 程序在 main 线程执行退出时，会触发执行 JVM 退出操作，但是 JVM 退出方法 `destroy_vm()` 会等待所有非守护线程都执行完，里面是用变量 number_of_non_daemon_threads 统计非守护线程的数量，这个变量在新增线程和删除线程时会做增减操作**。
+
+另外衍生一点就是：**当 JVM 退出时，所有还存在的守护线程会被抛弃，既不会执行 finally 部分代码，也不会执行 stack unwound 操作（也就是也不会 catch 异常）**。这个很明显，JVM 都退出了，守护线程自然退出了，当然这是守护线程的一个特性。
 
 ### 3. 是男是女？生下来就注定了
 
+这个比较好理解，就是线程是用户线程还是守护线程，在线程一开始就得确定，在调用 `start()` 方法之前，还只是个对象，没有映射到 JVM 中的线程，这个时候可以修改 `daemon` 属性，调用 `start()` 方法之后，JVM 中就有一个线程映射这个线程对象，所以不能做修改了。
 
 ## 守护线程继承自父线程
