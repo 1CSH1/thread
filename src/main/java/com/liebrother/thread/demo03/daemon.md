@@ -139,6 +139,92 @@ bool Threads::destroy_vm() {
 
 ### 3. 是男是女？生下来就注定了
 
-这个比较好理解，就是线程是用户线程还是守护线程，在线程一开始就得确定，在调用 `start()` 方法之前，还只是个对象，没有映射到 JVM 中的线程，这个时候可以修改 `daemon` 属性，调用 `start()` 方法之后，JVM 中就有一个线程映射这个线程对象，所以不能做修改了。
+这个比较好理解，就是线程是用户线程还是守护线程，在线程还未启动时就得确定。在调用 `start()` 方法之前，还只是个对象，没有映射到 JVM 中的线程，这个时候可以修改 `daemon` 属性，调用 `start()` 方法之后，JVM 中就有一个线程映射这个线程对象，所以不能做修改了。
 
-## 守护线程继承自父线程
+## 其他的特性
+### 1.守护线程属性继承自父线程
+
+这个咱就不用写代码来验证了，直接看 Thread 源代码构造方法里面就可以知道，代码如下所示。
+
+```
+private Thread(ThreadGroup g, Runnable target, String name,
+               long stackSize, AccessControlContext acc,
+               boolean inheritThreadLocals) {
+   ...省略一堆代码
+    this.daemon = parent.isDaemon();
+   ...省略一堆代码
+}
+```
+
+### 2.守护线程优先级比用户线程低
+
+看到很多书籍和资料都这么说，我也很怀疑。所以写了下面代码来测试是不是守护线程优先级比用户线程低？
+
+```
+public class TestDaemon {
+    static AtomicLong daemonTimes = new AtomicLong(0);
+    static AtomicLong userTimes = new AtomicLong(0);
+
+    public static void main(String[] args) {
+        int count = 2000;
+        List<MyThread> threads = new ArrayList<>(count);
+        for (int i = 0; i < count; i ++) {
+            MyThread userThread = new MyThread();
+            userThread.setDaemon(false);
+            threads.add(userThread);
+
+            MyThread daemonThread = new MyThread();
+            daemonThread.setDaemon(true);
+            threads.add(daemonThread);
+        }
+
+        for (int i = 0; i < count; i++) {
+            threads.get(i).start();
+        }
+
+        try {
+            Thread.sleep(10000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        System.out.println("daemon 统计：" + daemonTimes.get());
+        System.out.println("user 统计：" + userTimes.get());
+        System.out.println("daemon 和 user 相差时间：" + (daemonTimes.get() - userTimes.get()) + "ms");
+
+    }
+
+    static class MyThread extends Thread {
+        @Override
+        public void run() {
+            if (this.isDaemon()) {
+                daemonTimes.getAndAdd(System.currentTimeMillis());
+            } else {
+                userTimes.getAndAdd(System.currentTimeMillis());
+            }
+        }
+    }
+}
+```
+
+运行结果如下。
+
+```
+结果1：
+daemon 统计：1570785465411405
+user 统计：1570785465411570
+daemon 和 user 相差时间：-165ms
+
+结果2：
+daemon 统计：1570786615081403
+user 统计：1570786615081398
+daemon 和 user 相差时间：5ms
+```
+
+是不是很惊讶，居然相差无几，但是这个案例我也不能下定义说：守护线程和用户线程优先级是一样的。看了 JVM 代码也没找到守护线程优先级比用户线程低，这个点还是保持怀疑，有了解的朋友可以留言说一些，互相交流学习。
+
+## 总结
+
+总结一下这篇文章讲解的点，一个是线程被分为 2 种类型，一种是用户线程，另一种是守护线程；如果要把线程设置为守护线程，需要在线程调用`start()`方法前设置 `daemon` 属性；还有从 JVM 源码角度分析为什么当用户线程都执行完的时候，JVM 会自动退出。接着讲解了守护线程有继承性，父线程是守护线程，那么子线程默认就是守护线程；另外对一些书籍和资料所说的 **守护线程优先级比用户线程低** 提出自己的疑问，并希望有了解的朋友能帮忙解答。
+
+如果觉得这篇文章看了有收获，麻烦点个`在看`，支持一下，原创不易。 
